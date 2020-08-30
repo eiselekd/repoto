@@ -584,3 +584,186 @@
        for (ShellResult* sr : commands_) {
          string err;
          if (CheckShellResult(sr, &err)) {
+--- kati.ori/eval.h	2020-08-30 20:25:21.581042913 +0200
++++ kati/eval.h	2020-08-29 13:29:35.013395190 +0200
+@@ -19,6 +19,8 @@
+ #include <unordered_map>
+ #include <unordered_set>
+ #include <vector>
++#include <map>
++#include <string>
+ 
+ #include "loc.h"
+ #include "stmt.h"
+@@ -55,6 +57,7 @@
+ 
+   const Loc& loc() const { return loc_; }
+   void set_loc(const Loc& loc) { loc_ = loc; }
++  void set_caller(string callerstr) { caller_ = callerstr; }
+ 
+   const vector<const Rule*>& rules() const { return rules_; }
+   const unordered_map<Symbol, Vars*>& rule_vars() const { return rule_vars_; }
+@@ -82,6 +85,9 @@
+     return used_undefined_vars_;
+   }
+ 
++  string stackDump(void);
++  void dumpmapelements(void);
++
+   int eval_depth() const { return eval_depth_; }
+   void IncrementEvalDepth() { eval_depth_++; }
+   void DecrementEvalDepth() { eval_depth_--; }
+@@ -109,14 +115,40 @@
+     export_error_ = true;
+   }
+ 
++  struct Loc_ctx {
++      Loc l;
++      int ctx;
++  };
++
++  void PushEvalStack(Loc loc, int ctx) {
++      Loc_ctx l{loc,ctx};
++      evalstack.push_back(l);
++  }
++  void PopEvalStack(void) {
++      evalstack.pop_back();
++  }
++
++  string caller_;
++  map<string,int> mapfn;
++  int mapidx;
++  map<int,string> mapctx;
++  int ctxidx;
++  int ctx; // save for func invocation
++
++  int registerCtxIdGet(void);
++  int registerCtx(string str);
++  int registerCtx_(string str,int idx);
++
+  private:
++  vector<Loc_ctx> evalstack;
++
+   Var* EvalRHS(Symbol lhs,
+                Value* rhs,
+                StringPiece orig_rhs,
+                AssignOp op,
+                bool is_override,
+                bool *needs_assign);
+-  void DoInclude(const string& fname);
++  void DoInclude(const string& fname, const IncludeStmt* stmt);
+ 
+   Var* LookupVarGlobal(Symbol name);
+ 
+--- kati.ori/expr.h	2020-08-30 20:25:21.581042913 +0200
++++ kati/expr.h	2020-08-29 13:29:35.013395190 +0200
+@@ -30,6 +30,9 @@
+   virtual void Eval(Evaluator* ev, string* s) const = 0;
+   string Eval(Evaluator*) const;
+ 
++  virtual string substOneLevel(Evaluator*ev) const { (void)ev; return string("undef"); };
++  virtual bool isVarRef() const { return false; };
++
+  protected:
+   Evaluable();
+   virtual ~Evaluable();
+@@ -74,4 +77,6 @@
+ 
+ string JoinValues(const vector<Value*>& vals, const char* sep);
+ 
++void init_product_var_list(void);
++
+ #endif  // EXPR_H_
+--- kati.ori/flags.h	2020-08-30 20:25:21.581042913 +0200
++++ kati/flags.h	2020-08-29 13:29:35.013395190 +0200
+@@ -32,7 +32,6 @@
+   bool enable_stat_logs;
+   bool gen_all_targets;
+   bool generate_ninja;
+-  bool generate_empty_ninja;
+   bool is_dry_run;
+   bool is_silent_mode;
+   bool is_syntax_check_only;
+--- kati.ori/func.h	2020-08-30 20:25:21.581042913 +0200
++++ kati/func.h	2020-08-29 13:29:35.013395190 +0200
+@@ -20,6 +20,7 @@
+ #include <vector>
+ 
+ #include "expr.h"
++#include "loc.h"
+ 
+ using namespace std;
+ 
+--- kati.ori/loc.h	2020-08-30 20:25:21.581042913 +0200
++++ kati/loc.h	2020-08-29 13:29:35.013395190 +0200
+@@ -16,6 +16,7 @@
+ #define LOC_H_
+ 
+ #include <string>
++#include <sstream>
+ 
+ #include "stringprintf.h"
+ 
+@@ -25,6 +26,13 @@
+ 
+   const char* filename;
+   int lineno;
++
++
++    string as_string() const {
++	stringstream m;
++	m << (filename?filename:"<undef>") << ":" << lineno;
++	return m.str();
++    }
+ };
+ 
+ #define LOCF(x) (x).filename, (x).lineno
+--- kati.ori/log.h	2020-08-30 20:25:21.581042913 +0200
++++ kati/log.h	2020-08-29 13:29:35.013395190 +0200
+@@ -35,10 +35,24 @@
+ #ifdef NOLOG
+ #define LOG(args...)
+ #else
+-#define LOG(args...)                                             \
+-  do {                                                           \
+-    fprintf(stderr, "*kati*: %s\n", StringPrintf(args).c_str()); \
+-  } while (0)
++#define LOG(args...)							\
++    do {								\
++	fprintf(stderr, "*kati*: %s\n", StringPrintf(args).c_str());	\
++    } while (0)
++#endif
++
++#ifdef NOLOGL
++#define LOGL(args...)
++#else
++#define LOGL(args...)							\
++    do {								\
++	FILE *f;							\
++	f = fopen("/tmp/kati.log","a");					\
++	if (f) {							\
++	    fprintf(f, "*kati*: %s\n", StringPrintf(args).c_str());	\
++	}								\
++	fclose(f);							\
++    } while (0)
+ #endif
+ 
+ #define LOG_STAT(args...)                                          \
+--- kati.ori/stmt.h	2020-08-30 20:25:21.585042978 +0200
++++ kati/stmt.h	2020-08-29 13:29:35.013395190 +0200
+@@ -59,6 +59,7 @@
+ 
+   virtual string DebugString() const = 0;
+ 
++
+  protected:
+   Stmt();
+ 
+@@ -102,6 +103,7 @@
+   virtual string DebugString() const;
+ 
+   Symbol GetLhsSymbol(Evaluator* ev) const;
++  bool markDefine;
+ 
+  private:
+   mutable Symbol lhs_sym_cache_;
