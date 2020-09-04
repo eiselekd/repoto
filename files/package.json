@@ -19,7 +19,7 @@
       "https": "*",
       "later": "^1.2.0",
       "mocha": "*",
-      "mongodb": "^2.2.24",
+      "mongodb": "^3.6.1",
       "ws": "*"
    },
    "engines": {
