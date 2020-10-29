@@ -105,7 +105,16 @@ class mh_include(mh_base):
         super(mh_include,self).__init__(args,'include',m,xml,['rec'],['name'],depth=depth)
         n = self.name
         if not n.startswith("/"):
+            nori = n
             n = os.path.join(os.path.dirname(m.abspath),n);
+            if not os.path.isfile(n):
+                p = m.m
+                while not p is None:
+                    n = os.path.join(os.path.dirname(p.ctx['abspath']),nori);
+                    print(" > " + n  + " relative to " + p.ctx['abspath'])
+                    if os.path.isfile(n):
+                        break
+                    p = p.m
         self._c = ftomanifest(args,n,m,depth);
     def __str__(self):
         return "include name={}".format(self.name)
@@ -120,7 +129,7 @@ tags = {
 
 class mh_manifest(mh_base):
     def __init__(self,args,ctx,m,xml,depth=0):
-        super(mh_manifest,self).__init__('manifest',m,xml,['rec'],[],depth=depth)
+        super(mh_manifest,self).__init__(args, 'manifest',m,xml,['rec'],[],depth=depth)
         self.ctx = ctx;
         self._c = [ tags[c1.tag](args,self,c1,depth=self.depth+1) for c1 in [ c0 for c0 in xml if c0.tag in tags ] ]
     def __getattr__(self,n):
