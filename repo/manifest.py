@@ -215,20 +215,30 @@ class multirepo(logclass):
         self.path = path
         self.remotes = []
         self.alias = None
-    def addremote(self, v, url, n ):
+        self._id = -1;
+        self._ismerged = None
+    def addalias(self, a ):
+        if (a == self.path):
+            return;
+        if (self.alias is not None) and (a in self.alias):
+            return;
+        if (self.alias is None):
+            self.alias = [];
+        self.alias.append(a);
+
+    def addremote(self, v, url, n, mergefrom=None ):
         for r in self.remotes:
             if r['v'] == v:
                 for u in r['urls']:
                     if u['url'] == url and u['n'] == n:
                         return
-                r['urls'].append({'url':url,'n':n});
+                r['urls'].append({'url':url,'n':n, 'mergefrom':mergefrom});
                 return
-        self.remotes.append({'v':v, 'urls':[{'url':url,'n':n}]});
+        self.remotes.append({'v':v, 'urls':[{'url':url,'n':n,'mergefrom':mergefrom}]});
     def __str__(self):
         return ",".join([ "v:{},urls:{}".format(r['v'],r['urls'])  for r in self.remotes])+",path:"+self.path
 
     def urlof(self,n,ui):
-
         v = self.remotes[n]['urls'][ui]
         #print("+++++++ {} {}".format(n,ui) + str(v))
         r = v['url'] + v['n']
@@ -237,6 +247,8 @@ class multirepo(logclass):
         return r;
 
     def clonescript(self):
+        if self._ismerged is not None:
+            return "";
         cmd = []
         id = self.path.replace("/","_");
         url0 = self.urlof(0,0);
@@ -256,15 +268,23 @@ class multirepo(logclass):
         remotes = []
         for i in range(len(self.remotes)):
             urls = []
+            mergefrom = []
             for j in range(0,len(self.remotes[i]['urls'])):
                 urls.append(self.urlof(i,j));
+                if not (self.remotes[i]['urls'][j]['mergefrom'] is None):
+                    mergefrom.append(self.remotes[i]['urls'][j]['mergefrom'])
             urls = list(set(urls))
-            remotes.append( {'name' : self.remotes[i]['v'], 'urls' : urls } )
+            v = {'name' : self.remotes[i]['v'], 'urls' : urls }
+            if (len(mergefrom) > 0):
+                v['mergedfrom'] = mergefrom;
+            remotes.append(v)
         d = {   'id' : self.path.replace("/","_"),
                 'gerritpath' : self.path,
                 'remotes' : remotes }
         if self.alias is not None:
             d['alias'] = self.alias
+        if self._ismerged is not None:
+            d['ismerged'] = self._ismerged
         return d
 
 class multirepolist(logclass):
@@ -274,6 +294,7 @@ class multirepolist(logclass):
         self.p = []
         self.ptop = {}
     def add(self,e):
+        e._id = len(self.p)
         self.p.append(e)
 
     def regProj(self,p):
@@ -281,7 +302,7 @@ class multirepolist(logclass):
             return self.ptop[p];
         pr = multirepo(self,p);
         self.ptop[p] = pr;
-        self.p.append(pr);
+        self.add(pr);
         return pr;
     def __str__(self):
         return "\n".join([str(i) for i in self.p]);
@@ -296,6 +317,41 @@ class multirepolist(logclass):
         d = [ p.jsonscript() for p in self.p];
         return json.dumps(d, sort_keys=True, indent=4, separators=(',', ': '), cls=PythonObjectEncoder);
 
+    def merge(self):
+        global_alias = {};
+        def add_alias(a,b):
+            if not (a in global_alias):
+                global_alias[a] = {};
+            global_alias[a][b] = 1;
+        for p in self.p:
+            add_alias(p.path, p._id);
+            if p.alias is not None:
+                for a in p.alias:
+                    add_alias(a, p._id);
+
+        for k in global_alias.keys():
+            k0 = global_alias[k].keys();
+            if (len(k0) > 1):
+                k1 = sorted(k0, key=lambda i:  len(self.p[i].remotes), reverse=True)
+                dest = self.p[k1[0]]
+                for i in (range(1,len(k1))):
+                    f = self.p[k1[i]]
+                    # merge f
+                    f._ismerged = dest.path
+                    print("Merge %s into %s" %(f.path,dest.path))
+                    for v in (f.remotes):
+                        for u in v['urls']:
+                            dest.addremote(v['v'],u['url'], u['n'],mergefrom=f.path);
+                    dest.addalias(f.path);
+                    if (f.alias is not None):
+                        for a in (f.alias):
+                            dest.addalias(a);
+
+
+
+
+
+        pass
 
 
 

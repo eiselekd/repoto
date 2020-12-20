@@ -350,6 +350,8 @@ def genmirrors(args):
                             mfnbase = mfnbase+mfnh['flattened-suffix']
                         do_flatten(args, mfn, os.path.join(args.flattenrepo,mfnbase+".flatten.xml"));
 
+    mp.merge();
+
     if args.clonescript:
         dstbase=os.path.join(os.path.dirname(args.clonescript),"base.sh")
         if not os.path.exists(dstbase):
